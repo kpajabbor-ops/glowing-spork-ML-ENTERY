@@ -1,0 +1,363 @@
+<!-- Transport ML Management - Single-file HTML + JS
+     Updated: Delete buttons now require entering password '12345' to confirm deletion.
+     Features:
+     - Horizontal menu: ML ENTRY, PAYMENT RECEIVED, SEARCH, REPORT
+     - ML Entry form with validation (required fields)
+     - Save, Edit, Delete ML entries (delete requires password)
+     - Payment Received form: manually type ML No (with suggestions), show pending, add payment with vendor commission, UTR, mode
+     - Save, Edit, Delete payments (delete requires password)
+     - Search modal for ML No and show details (pending, received, freight)
+     - Report by date range showing Pending, Received, Total Freight
+     - Data persisted in localStorage
+     - Refresh buttons to clear forms
+
+     Save this as transport-ml.html and open in browser.
+-->
+
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Transport ML Manager</title>
+  <style>
+    /* Simple clean styles */
+    :root{font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial;}
+    body{margin:0;padding:20px;background:#f5f7fb;color:#111}
+    .nav{display:flex;gap:8px;background:#fff;padding:8px;border-radius:8px;box-shadow:0 2px 6px rgba(0,0,0,.06)}
+    .nav button{padding:10px 16px;border:0;border-radius:6px;background:transparent;cursor:pointer}
+    .nav button.active{background:#2563eb;color:#fff}
+    .card{background:#fff;padding:16px;margin-top:16px;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.06)}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+    label{display:block;font-size:13px;margin-bottom:6px}
+    input,select,textarea{width:100%;padding:8px;border:1px solid #ddd;border-radius:6px}
+    .btn{padding:10px 14px;border-radius:6px;border:0;cursor:pointer}
+    .btn.save{background:#10b981;color:#fff}
+    .btn.secondary{background:#e5e7eb}
+    .btn.danger{background:#ef4444;color:#fff}
+    table{width:100%;border-collapse:collapse;margin-top:12px}
+    th,td{padding:8px;border-bottom:1px solid #eee;text-align:left}
+    .small{font-size:13px;color:#555}
+    .actions button{margin-right:6px}
+    .muted{color:#666;font-size:13px}
+    .flex{display:flex;gap:8px;align-items:center}
+    .right{margin-left:auto}
+    .error{color:#b91c1c;font-size:13px}
+    .summary{display:flex;gap:12px;margin-top:12px}
+    .summary .box{padding:10px;border-radius:8px;background:#fafafa;flex:1;text-align:center}
+    /* Modal */
+    .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.4);display:none;align-items:center;justify-content:center}
+    .modal{background:#fff;padding:16px;border-radius:8px;max-width:700px;width:95%;}
+  </style>
+</head>
+<body>
+  <h2>Transport ML Manager</h2>
+  <div class="nav" role="tablist">
+    <button id="tab-entry" class="active">ML ENTRY</button>
+    <button id="tab-payment">PAYMENT RECEIVED</button>
+    <button id="tab-search">SEARCH</button>
+    <button id="tab-report">REPORT</button>
+  </div>
+
+  <!-- ML Entry -->
+  <div id="panel-entry" class="card">
+    <h3>ML Entry</h3>
+    <div class="grid">
+      <div>
+        <label>ML No *</label>
+        <input id="mlno" placeholder="Enter ML Number">
+      </div>
+      <div>
+        <label>Vehicle No *</label>
+        <input id="vehicle" placeholder="Enter Vehicle No">
+      </div>
+      <div>
+        <label>From Station *</label>
+        <input id="from" placeholder="From">
+      </div>
+      <div>
+        <label>To Station *</label>
+        <input id="to" placeholder="To">
+      </div>
+      <div>
+        <label>Freight (₹) *</label>
+        <input id="freight" type="number" min="0" step="0.01" placeholder="Freight amount">
+      </div>
+      <div>
+        <label>Date *</label>
+        <input id="date" type="date">
+      </div>
+    </div>
+    <div style="margin-top:12px" class="flex">
+      <button id="saveEntry" class="btn save">Save</button>
+      <button id="resetEntry" class="btn secondary">Refresh</button>
+      <div id="entryError" class="error right" aria-live="polite"></div>
+    </div>
+
+    <h4 style="margin-top:16px">ML List</h4>
+    <table id="mlTable">
+      <thead><tr><th>ML No</th><th>Vehicle</th><th>From → To</th><th>Freight</th><th>Date</th><th>Pending</th><th>Actions</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <!-- Payment Received -->
+  <div id="panel-payment" class="card" style="display:none">
+    <h3>Payment Received</h3>
+    <div class="grid">
+      <div>
+        <label>ML No (type manually) *</label>
+        <input id="pay_mlno" list="ml_suggestions" placeholder="Type ML No or choose suggestion">
+        <datalist id="ml_suggestions"></datalist>
+      </div>
+      <div>
+        <label>Pending Amount (₹)</label>
+        <input id="pending" readonly>
+      </div>
+      <div>
+        <label>Payment Amount (₹) *</label>
+        <input id="pay_amount" type="number" min="0" step="0.01">
+      </div>
+      <div>
+        <label>Vendor Commission (₹) *</label>
+        <input id="commission" type="number" min="0" step="0.01" placeholder="Commission less than freight">
+      </div>
+      <div>
+        <label>Payment Mode *</label>
+        <select id="mode"><option value="UPI">UPI</option><option value="Cash">Cash</option><option value="Account">Account</option></select>
+      </div>
+      <div>
+        <label>UTR / Ref No</label>
+        <input id="utr" placeholder="Optional UTR number">
+      </div>
+    </div>
+    <div style="margin-top:12px" class="flex">
+      <button id="savePayment" class="btn save">Save Payment</button>
+      <button id="resetPayment" class="btn secondary">Refresh</button>
+      <div id="payError" class="error right" aria-live="polite"></div>
+    </div>
+
+    <h4 style="margin-top:16px">Payments</h4>
+    <table id="paymentsTable">
+      <thead><tr><th>ML No</th><th>Paid</th><th>Commission</th><th>Mode</th><th>UTR</th><th>Date</th><th>Actions</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <!-- Search -->
+  <div id="panel-search" class="card" style="display:none">
+    <h3>Search</h3>
+    <div class="flex">
+      <input id="searchInput" placeholder="Enter ML No to search" style="flex:1;padding:8px;border:1px solid #ddd;border-radius:6px">
+      <button id="openSearch" class="btn save">Open</button>
+      <button id="clearSearch" class="btn secondary">Refresh</button>
+    </div>
+
+    <div id="searchResult" style="margin-top:12px"></div>
+  </div>
+
+  <!-- Report -->
+  <div id="panel-report" class="card" style="display:none">
+    <h3>Report</h3>
+    <div class="grid">
+      <div>
+        <label>From Date</label>
+        <input id="reportFrom" type="date">
+      </div>
+      <div>
+        <label>To Date</label>
+        <input id="reportTo" type="date">
+      </div>
+    </div>
+    <div style="margin-top:12px" class="flex">
+      <button id="runReport" class="btn save">Run Report</button>
+      <button id="resetReport" class="btn secondary">Refresh</button>
+    </div>
+
+    <div id="reportResult" style="margin-top:12px"></div>
+  </div>
+
+  <!-- Search Modal (simple) -->
+  <div id="modal" class="modal-bg"><div class="modal" role="dialog">
+    <h4>Search ML Details</h4>
+    <div id="modalBody"></div>
+    <div style="margin-top:12px;text-align:right"><button id="closeModal" class="btn secondary">Close</button></div>
+  </div></div>
+
+
+  <script>
+    // Storage key
+    const KEY = 'transport_ml_db_v1';
+
+    // Data structure: { mls: [{mlno,vehicle,from,to,freight,date,payments:[{amount,commission,mode,utr,date, id}]}] }
+    function loadDB(){
+      try{const raw=localStorage.getItem(KEY);return raw?JSON.parse(raw):{mls:[]};}catch(e){return {mls:[]};}
+    }
+    function saveDB(db){localStorage.setItem(KEY,JSON.stringify(db));}
+
+    // DOM refs
+    const tabs = {entry:document.getElementById('tab-entry'),payment:document.getElementById('tab-payment'),search:document.getElementById('tab-search'),report:document.getElementById('tab-report')};
+    const panels = {entry:document.getElementById('panel-entry'),payment:document.getElementById('panel-payment'),search:document.getElementById('panel-search'),report:document.getElementById('panel-report')};
+
+    // Switch tabs
+    Object.keys(tabs).forEach(k=>{tabs[k].addEventListener('click',()=>{setActive(k);});});
+    function setActive(k){Object.values(tabs).forEach(b=>b.classList.remove('active'));tabs[k].classList.add('active');Object.values(panels).forEach(p=>p.style.display='none');panels[k].style.display='block';if(k==='payment') populateMLSuggestions();}
+
+    // Populate ML table
+    function renderMLTable(){
+      const db=loadDB();
+      const tbody=document.querySelector('#mlTable tbody');tbody.innerHTML='';
+      db.mls.forEach(m=>{
+        const pending = computePending(m);
+        const tr=document.createElement('tr');
+        tr.innerHTML=`<td>${m.mlno}</td><td>${m.vehicle}</td><td>${m.from} → ${m.to}</td><td>₹ ${format(m.freight)}</td><td>${m.date}</td><td>₹ ${format(pending)}</td><td class="actions"><button data-ml="${m.mlno}" class="edit btn">Edit</button><button data-ml="${m.mlno}" class="paynow btn">Pay</button><button data-ml="${m.mlno}" class="delete ml-del btn danger">Delete</button></td>`;
+        tbody.appendChild(tr);
+      });
+      // attach handlers
+      document.querySelectorAll('.edit').forEach(b=>b.addEventListener('click',e=>editML(e.target.dataset.ml)));
+      document.querySelectorAll('.paynow').forEach(b=>b.addEventListener('click',e=>openPaymentFor(e.target.dataset.ml)));
+      document.querySelectorAll('.ml-del').forEach(b=>b.addEventListener('click',e=>deleteML(e.target.dataset.ml)));
+    }
+
+    function format(n){return Number(n||0).toFixed(2);}    
+    function computePending(m){
+      const paid = (m.payments||[]).reduce((s,p)=>s + Number(p.amount||0) + Number(p.commission||0),0);
+      return Math.max(0, Number(m.freight) - paid);
+    }
+
+    // Entry save
+    const saveEntryBtn = document.getElementById('saveEntry');
+    saveEntryBtn.addEventListener('click',()=>{
+      const mlno=document.getElementById('mlno').value.trim();
+      const vehicle=document.getElementById('vehicle').value.trim();
+      const from=document.getElementById('from').value.trim();
+      const to=document.getElementById('to').value.trim();
+      const freight=document.getElementById('freight').value;
+      const date=document.getElementById('date').value;
+      const err=document.getElementById('entryError');err.textContent='';
+      if(!mlno || !vehicle || !from || !to || freight==='' || !date){err.textContent='Sab required fields bharein (marked *).';return;}
+      const db=loadDB();
+      // check if exists
+      const existing = db.mls.find(x=>x.mlno===mlno);
+      if(existing && editing!==mlno){err.textContent='Yeh ML No pehle se maujood hai. Edit karein agar zaroori ho.';return;}
+      if(editing){ // update
+        const row = db.mls.find(x=>x.mlno===editing);
+        row.mlno = mlno; row.vehicle=vehicle; row.from=from; row.to=to; row.freight=Number(freight); row.date=date;
+        editing=null; saveDB(db);renderMLTable(); populateMLSuggestions(); clearEntryForm(); err.textContent='Saved.';return;
+      }
+      db.mls.push({mlno,vehicle,from,to,freight:Number(freight),date,payments:[]});
+      saveDB(db);renderMLTable();populateMLSuggestions();clearEntryForm();err.textContent='Saved.';
+    });
+
+    // Reset entry
+    document.getElementById('resetEntry').addEventListener('click',clearEntryForm);
+    function clearEntryForm(){editing=null;document.getElementById('mlno').value='';document.getElementById('vehicle').value='';document.getElementById('from').value='';document.getElementById('to').value='';document.getElementById('freight').value='';document.getElementById('date').value='';document.getElementById('entryError').textContent='';}
+
+    // Delete ML
+    function deleteML(mlno){ const pwd = prompt('Delete ke liye password daalein:'); if(pwd !== '12345'){ alert('Galat password — delete cancel hua'); return; } if(!confirm('Kya aap sach mein is ML ko delete karna chahte hain? Isse related saare payments bhi delete ho jayenge.')) return; const db=loadDB(); db.mls = db.mls.filter(x=>x.mlno!==mlno); saveDB(db); renderMLTable(); populateMLSuggestions(); }
+
+    // Edit
+    let editing = null;
+    function editML(mlno){
+      const db=loadDB();const m=db.mls.find(x=>x.mlno===mlno);if(!m) return;editing=mlno;document.getElementById('mlno').value=m.mlno;document.getElementById('vehicle').value=m.vehicle;document.getElementById('from').value=m.from;document.getElementById('to').value=m.to;document.getElementById('freight').value=m.freight;document.getElementById('date').value=m.date;setActive('entry');}
+
+    // Populate ML suggestions for manual typing
+    function populateMLSuggestions(){
+      const dl = document.getElementById('ml_suggestions'); dl.innerHTML='';
+      const db=loadDB(); db.mls.forEach(m=>{ const opt=document.createElement('option'); opt.value = m.mlno; dl.appendChild(opt); });
+      renderPaymentsTable();
+    }
+
+    // On pay_mlno change show pending
+    document.getElementById('pay_mlno').addEventListener('input',()=>{
+      const ml=document.getElementById('pay_mlno').value.trim();const db=loadDB();const m=db.mls.find(x=>x.mlno===ml);document.getElementById('pending').value = m? format(computePending(m)) : '';
+    });
+
+    // Save payment
+    const savePaymentBtn = document.getElementById('savePayment');
+    savePaymentBtn.addEventListener('click', savePaymentHandler);
+
+    function savePaymentHandler(){
+      const ml=document.getElementById('pay_mlno').value.trim();const amount=document.getElementById('pay_amount').value;const commission=document.getElementById('commission').value||0;const mode=document.getElementById('mode').value;const utr=document.getElementById('utr').value;const err=document.getElementById('payError');err.textContent='';
+      if(!ml || amount===''|| commission===''){err.textContent='Required fields bharein.';return;}
+      const db=loadDB();const m=db.mls.find(x=>x.mlno===ml);if(!m){err.textContent='ML nahi mila. Pehle ML entry banayein.';return;}
+      const pending = computePending(m);
+      if(Number(commission) >= Number(m.freight)){err.textContent='Commission freight se kam hona chahiye.';return;}
+      if(Number(amount) <=0){err.textContent='Payment positive hona chahiye.';return;}
+      // ensure payment+commission <= pending
+      if(Number(amount) + Number(commission) > pending + 0.0001){err.textContent='Payment aur commission total pending se zyada nahi ho sakta.';return;}
+      const pay = {id:generateId(), amount:Number(amount),commission:Number(commission),mode,utr,date:(new Date()).toISOString().split('T')[0]};
+      m.payments.push(pay);saveDB(db);populateMLSuggestions();renderMLTable();clearPaymentForm();err.textContent='Payment saved.';
+    }
+
+    function clearPaymentForm(){document.getElementById('pay_mlno').value='';document.getElementById('pending').value='';document.getElementById('pay_amount').value='';document.getElementById('commission').value='';document.getElementById('utr').value='';document.getElementById('payError').textContent='';}
+    document.getElementById('resetPayment').addEventListener('click',clearPaymentForm);
+
+    // Payments table
+    function renderPaymentsTable(){
+      const db=loadDB();const tbody=document.querySelector('#paymentsTable tbody');tbody.innerHTML='';
+      db.mls.forEach(m=>{(m.payments||[]).forEach(p=>{const tr=document.createElement('tr');tr.innerHTML=`<td>${m.mlno}</td><td>₹ ${format(p.amount)}</td><td>₹ ${format(p.commission)}</td><td>${p.mode}</td><td>${p.utr||''}</td><td>${p.date}</td><td><button class="btn secondary" data-ml="${m.mlno}" data-payid="${p.id}">Edit</button><button class="btn danger" data-ml="${m.mlno}" data-payid="${p.id}">Delete</button></td>`;tbody.appendChild(tr);});});
+      // attach edit payment handlers
+      document.querySelectorAll('#paymentsTable button').forEach(b=>b.addEventListener('click', (e)=>{ const ml=e.target.dataset.ml; const pid=e.target.dataset.payid; if(e.target.textContent.trim().toLowerCase()==='edit'){ editPayment(ml,pid); } else { deletePayment(ml,pid); } }));
+    }
+
+    // Delete payment
+    function deletePayment(ml,pid){ const pwd = prompt('Delete payment ke liye password daalein:'); if(pwd !== '12345'){ alert('Galat password — delete cancel hua'); return; } if(!confirm('Kya aap sach mein is payment ko delete karna chahte hain?')) return; const db=loadDB(); const m = db.mls.find(x=>x.mlno===ml); if(!m) return; m.payments = (m.payments||[]).filter(p=>p.id!==pid); saveDB(db); renderPaymentsTable(); renderMLTable(); populateMLSuggestions(); } 
+
+    // Edit payment: open payment tab and prefill
+    function editPayment(ml,pid){ setActive('payment'); const db=loadDB(); const m=db.mls.find(x=>x.mlno===ml); if(!m) return; const p=m.payments.find(x=>x.id===pid); if(!p) return; document.getElementById('pay_mlno').value=ml; document.getElementById('pending').value = format(computePending(m) + p.amount + p.commission); document.getElementById('pay_amount').value = p.amount; document.getElementById('commission').value = p.commission; document.getElementById('mode').value = p.mode; document.getElementById('utr').value = p.utr; 
+      // temporarily change save button behavior
+      const saveBtn = document.getElementById('savePayment'); saveBtn.textContent = 'Update Payment';
+      // remove existing click to avoid duplicates
+      saveBtn.removeEventListener('click', savePaymentHandler);
+      const updateHandler = function updateHandler(){
+        const newAmount=document.getElementById('pay_amount').value; const newCommission=document.getElementById('commission').value||0; const newMode=document.getElementById('mode').value; const newUtr=document.getElementById('utr').value; const err=document.getElementById('payError'); err.textContent='';
+        if(!ml || newAmount===''|| newCommission===''){err.textContent='Required fields bharein.';return;}
+        if(Number(newCommission) >= Number(m.freight)){err.textContent='Commission freight se kam hona chahiye.';return;}
+        if(Number(newAmount) <=0){err.textContent='Payment positive hona chahiye.';return;}
+        const currentPending = computePending(m) + p.amount + p.commission; if(Number(newAmount)+Number(newCommission) > currentPending + 0.0001){err.textContent='Payment aur commission total pending se zyada nahi ho sakta.';return;}
+        // update
+        p.amount = Number(newAmount); p.commission = Number(newCommission); p.mode=newMode; p.utr=newUtr; saveDB(db); renderPaymentsTable(); renderMLTable(); clearPaymentForm(); saveBtn.textContent='Save Payment'; saveBtn.removeEventListener('click', updateHandler); saveBtn.addEventListener('click', savePaymentHandler);
+      };
+      saveBtn.addEventListener('click', updateHandler);
+    }
+
+    // helper id generator
+    function generateId(){ return 'p_' + Math.random().toString(36).slice(2,9); }
+
+    // Open payment for ml
+    function openPaymentFor(ml){ setActive('payment'); document.getElementById('pay_mlno').value = ml; document.getElementById('pay_mlno').dispatchEvent(new Event('input')); }
+
+    // Search
+    document.getElementById('openSearch').addEventListener('click',()=>{
+      const ml=document.getElementById('searchInput').value.trim();if(!ml){alert('ML No daalein');return;}openModalWithML(ml);
+    });
+    function openModalWithML(ml){const db=loadDB();const m=db.mls.find(x=>x.mlno===ml);const body=document.getElementById('modalBody');
+      if(!m){body.innerHTML=`<p class="muted">Koi data nahi mila for ML: <strong>${ml}</strong></p>`;}else{
+        const paid = (m.payments||[]).reduce((s,p)=>s + Number(p.amount||0)+Number(p.commission||0),0);
+        body.innerHTML = `<div><strong>ML:</strong> ${m.mlno}</div><div><strong>Vehicle:</strong> ${m.vehicle}</div><div><strong>Route:</strong> ${m.from} → ${m.to}</div><div><strong>Freight:</strong> ₹ ${format(m.freight)}</div><div><strong>Paid (including commission):</strong> ₹ ${format(paid)}</div><div><strong>Pending:</strong> ₹ ${format(computePending(m))}</div><h4 style="margin-top:8px">Payments</h4>` + (m.payments && m.payments.length? `<table><thead><tr><th>Date</th><th>Paid</th><th>Commission</th><th>Mode</th><th>UTR</th></tr></thead><tbody>` + m.payments.map(p=>`<tr><td>${p.date}</td><td>₹ ${format(p.amount)}</td><td>₹ ${format(p.commission)}</td><td>${p.mode}</td><td>${p.utr||''}</td></tr>`).join('') + `</tbody></table>` : `<p class="muted">No payments yet.</p>`);
+      }
+      document.getElementById('modal').style.display='flex';
+    }
+    document.getElementById('closeModal').addEventListener('click',()=>{document.getElementById('modal').style.display='none';});
+
+    // Search refresh
+    document.getElementById('clearSearch').addEventListener('click',()=>{document.getElementById('searchInput').value='';document.getElementById('searchResult').innerHTML='';});
+
+    // Report
+    document.getElementById('runReport').addEventListener('click',()=>{
+      const from=document.getElementById('reportFrom').value;const to=document.getElementById('reportTo').value;const db=loadDB();
+      if(!from || !to){alert('From aur To date dono de dein');return;}
+      const f=new Date(from);const t=new Date(to); if(f>t){alert('From date To se pehle hona chahiye');return;}
+      const filtered = db.mls.filter(m=>{ const d=new Date(m.date); return d>=f && d<=t; });
+      let totalFreight=0, totalPaid=0, totalPending=0;
+      const rows = filtered.map(m=>{const paid = (m.payments||[]).reduce((s,p)=>s+Number(p.amount||0)+Number(p.commission||0),0); const pend = Math.max(0,Number(m.freight)-paid); totalFreight+=Number(m.freight); totalPaid+=paid; totalPending+=pend; return `<tr><td>${m.mlno}</td><td>${m.date}</td><td>₹ ${format(m.freight)}</td><td>₹ ${format(paid)}</td><td>₹ ${format(pend)}</td></tr>`;});
+      document.getElementById('reportResult').innerHTML = `<div class="summary"><div class="box"><strong>Total Freight</strong><div>₹ ${format(totalFreight)}</div></div><div class="box"><strong>Total Received (incl commission)</strong><div>₹ ${format(totalPaid)}</div></div><div class="box"><strong>Total Pending</strong><div>₹ ${format(totalPending)}</div></div></div><table style="margin-top:12px"><thead><tr><th>ML No</th><th>Date</th><th>Freight</th><th>Received</th><th>Pending</th></tr></thead><tbody>${rows.join('')}</tbody></table>`;
+    });
+    document.getElementById('resetReport').addEventListener('click',()=>{document.getElementById('reportFrom').value='';document.getElementById('reportTo').value='';document.getElementById('reportResult').innerHTML='';});
+
+    // init
+    renderMLTable();populateMLSuggestions();
+  </script>
+</body>
+</html>
